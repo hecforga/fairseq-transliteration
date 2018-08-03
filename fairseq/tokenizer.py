@@ -17,7 +17,7 @@ SPACE_NORMALIZER = re.compile("\s+")
 def tokenize_line(line):
     line = SPACE_NORMALIZER.sub(" ", line)
     line = line.strip()
-    return line.split()
+    return list(line)#line.split()
 
 
 class Tokenizer:

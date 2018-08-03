@@ -54,7 +54,7 @@ The following command-line tools are provided:
 ## Evaluating Pre-trained Models
 First, download a pre-trained model along with its vocabularies:
 ```
-$ curl https://s3.amazonaws.com/fairseq-py/models/wmt14.v2.en-fr.fconv-py.tar.bz2 | tar xvjf -
+curl https://s3.amazonaws.com/fairseq-py/models/wmt14.v2.en-fr.fconv-py.tar.bz2 | tar xvjf -
 ```
 
 This model uses a [Byte Pair Encoding (BPE) vocabulary](https://arxiv.org/abs/1508.07909), so we'll have to apply the encoding to the source text before it can be translated.
@@ -65,8 +65,8 @@ Prior to BPE, input text needs to be tokenized using `tokenizer.perl` from [mose
 Let's use `python interactive.py` to generate translations interactively.
 Here, we use a beam size of 5:
 ```
-$ MODEL_DIR=wmt14.en-fr.fconv-py
-$ python interactive.py \
+MODEL_DIR=wmt14.en-fr.fconv-py
+python interactive.py \
  --path $MODEL_DIR/model.pt $MODEL_DIR \
  --beam 5
 | loading model(s) from wmt14.en-fr.fconv-py/model.pt
@@ -93,11 +93,11 @@ For an example of how to use Fairseq for other tasks, such as [language modeling
 Fairseq contains example pre-processing scripts for several translation datasets: IWSLT 2014 (German-English), WMT 2014 (English-French) and WMT 2014 (English-German).
 To pre-process and binarize the IWSLT dataset:
 ```
-$ cd examples/translation/
-$ bash prepare-iwslt14.sh
-$ cd ../..
-$ TEXT=examples/translation/iwslt14.tokenized.de-en
-$ python preprocess.py --source-lang de --target-lang en \
+cd examples/translation/
+bash prepare-iwslt14.sh
+cd ../..
+TEXT=examples/translation/iwslt14.tokenized.de-en
+python preprocess.py --source-lang de --target-lang en \
   --trainpref $TEXT/train --validpref $TEXT/valid --testpref $TEXT/test \
   --destdir data-bin/iwslt14.tokenized.de-en
 ```
@@ -107,8 +107,8 @@ This will write binarized data that can be used for model training to `data-bin/
 Use `python train.py` to train a new model.
 Here a few example settings that work well for the IWSLT 2014 dataset:
 ```
-$ mkdir -p checkpoints/fconv
-$ CUDA_VISIBLE_DEVICES=0 python train.py data-bin/iwslt14.tokenized.de-en \
+mkdir -p checkpoints/fconv
+CUDA_VISIBLE_DEVICES=0 python train.py data-bin/iwslt14.tokenized.de-en \
   --lr 0.25 --clip-norm 0.1 --dropout 0.2 --max-tokens 4000 \
   --arch fconv_iwslt_de_en --save-dir checkpoints/fconv
 ```
@@ -122,7 +122,7 @@ You may need to use a smaller value depending on the available GPU memory on you
 ### Generation
 Once your model is trained, you can generate translations using `python generate.py` **(for binarized data)** or `python interactive.py` **(for raw text)**:
 ```
-$ python generate.py data-bin/iwslt14.tokenized.de-en \
+python generate.py data-bin/iwslt14.tokenized.de-en \
   --path checkpoints/fconv/checkpoint_best.pt \
   --batch-size 128 --beam 5
   | [de] dictionary: 35475 types
@@ -169,9 +169,9 @@ Stories with Convolutional Model <br> ([Fan et al., 2018](https://arxiv.org/abs/
 
 Generation with the binarized test sets can be run in batch mode as follows, e.g. for WMT 2014 English-French on a GTX-1080ti:
 ```
-$ curl https://s3.amazonaws.com/fairseq-py/models/wmt14.v2.en-fr.fconv-py.tar.bz2 | tar xvjf - -C data-bin
-$ curl https://s3.amazonaws.com/fairseq-py/data/wmt14.v2.en-fr.newstest2014.tar.bz2 | tar xvjf - -C data-bin
-$ python generate.py data-bin/wmt14.en-fr.newstest2014  \
+curl https://s3.amazonaws.com/fairseq-py/models/wmt14.v2.en-fr.fconv-py.tar.bz2 | tar xvjf - -C data-bin
+curl https://s3.amazonaws.com/fairseq-py/data/wmt14.v2.en-fr.newstest2014.tar.bz2 | tar xvjf - -C data-bin
+python generate.py data-bin/wmt14.en-fr.newstest2014  \
   --path data-bin/wmt14.en-fr.fconv-py/model.pt \
   --beam 5 --batch-size 128 --remove-bpe | tee /tmp/gen.out
 ...
@@ -179,9 +179,9 @@ $ python generate.py data-bin/wmt14.en-fr.newstest2014  \
 | Generate test with beam=5: BLEU4 = 40.83, 67.5/46.9/34.4/25.5 (BP=1.000, ratio=1.006, syslen=83262, reflen=82787)
 
 # Scoring with score.py:
-$ grep ^H /tmp/gen.out | cut -f3- > /tmp/gen.out.sys
-$ grep ^T /tmp/gen.out | cut -f2- > /tmp/gen.out.ref
-$ python score.py --sys /tmp/gen.out.sys --ref /tmp/gen.out.ref
+grep ^H /tmp/gen.out | cut -f3- > /tmp/gen.out.sys
+grep ^T /tmp/gen.out | cut -f2- > /tmp/gen.out.ref
+python score.py --sys /tmp/gen.out.sys --ref /tmp/gen.out.ref
 BLEU4 = 40.83, 67.5/46.9/34.4/25.5 (BP=1.000, ratio=1.006, syslen=83262, reflen=82787)
 ```
 
@@ -218,9 +218,9 @@ Additionally, each worker has a rank, that is a unique number from 0 to n-1 wher
 If you run on a cluster managed by [SLURM](https://slurm.schedmd.com/) you can train a large English-French model on the WMT 2014 dataset on 16 nodes with 8 GPUs each (in total 128 GPUs) using this command:
 
 ```
-$ DATA=...   # path to the preprocessed dataset, must be visible from all nodes
-$ PORT=9218  # any available TCP port that can be used by the trainer to establish initial connection
-$ sbatch --job-name fairseq-py --gres gpu:8 --cpus-per-task 10 \
+DATA=...   # path to the preprocessed dataset, must be visible from all nodes
+PORT=9218  # any available TCP port that can be used by the trainer to establish initial connection
+sbatch --job-name fairseq-py --gres gpu:8 --cpus-per-task 10 \
     --nodes 16 --ntasks-per-node 8 \
     --wrap 'srun --output train.log.node%t --error train.stderr.node%t.%j \
     python train.py $DATA \
@@ -234,10 +234,10 @@ $ sbatch --job-name fairseq-py --gres gpu:8 --cpus-per-task 10 \
 
 Alternatively you can manually start one process per GPU:
 ```
-$ DATA=...  # path to the preprocessed dataset, must be visible from all nodes
-$ HOST_PORT=master.devserver.com:9218  # one of the hosts used by the job
-$ RANK=...  # the rank of this process, from 0 to 127 in case of 128 GPUs
-$ python train.py $DATA \
+DATA=...  # path to the preprocessed dataset, must be visible from all nodes
+HOST_PORT=master.devserver.com:9218  # one of the hosts used by the job
+RANK=...  # the rank of this process, from 0 to 127 in case of 128 GPUs
+python train.py $DATA \
     --distributed-world-size 128 \
     --distributed-init-method 'tcp://$HOST_PORT' \
     --distributed-rank $RANK \

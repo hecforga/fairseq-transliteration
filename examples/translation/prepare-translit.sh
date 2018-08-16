@@ -15,7 +15,7 @@ CLEAN=$SCRIPTS/training/clean-corpus-n.perl
 BPEROOT=subword-nmt
 BPE_TOKENS=10000
 
-URL="https://wit3.fbk.eu/archive/2014-01/texts/de/en/latn-armn.tar.gz"
+URL="https://deeplanguageclass.github.io/fairseq-transliteration-data/latn-armn.tar.gz"
 GZ=latn-armn.tar.gz
 
 if [ ! -d "$SCRIPTS" ]; then
@@ -86,21 +86,21 @@ done
 
 echo "creating train, valid, test..."
 for l in $src $tgt; do
-    awk '{if (NR%23 == 0)  print $0; }' $tmp/train.tags.de-en.$l > $tmp/valid.$l
-    awk '{if (NR%23 != 0)  print $0; }' $tmp/train.tags.de-en.$l > $tmp/train.$l
+    awk '{if (NR%23 == 0)  print $0; }' $tmp/train.tags.latn-armn.$l > $tmp/valid.$l
+    awk '{if (NR%23 != 0)  print $0; }' $tmp/train.tags.latn-armn.$l > $tmp/train.$l
 
     cat $tmp/IWSLT14.TED.
     
     
-    v2010.de-en.$l \
-        $tmp/IWSLT14.TEDX.dev2012.de-en.$l \
-        $tmp/IWSLT14.TED.tst2010.de-en.$l \
-        $tmp/IWSLT14.TED.tst2011.de-en.$l \
-        $tmp/IWSLT14.TED.tst2012.de-en.$l \
+    v2010.latn-armn.$l \
+        $tmp/IWSLT14.TEDX.dev2012.latn-armn.$l \
+        $tmp/IWSLT14.TED.tst2010.latn-armn.$l \
+        $tmp/IWSLT14.TED.tst2011.latn-armn.$l \
+        $tmp/IWSLT14.TED.tst2012.latn-armn.$l \
         > $tmp/test.$l
 done
 
-TRAIN=$tmp/train.en-de
+TRAIN=$tmp/train.armn-latn
 BPE_CODE=$prep/code
 rm -f $TRAIN
 for l in $src $tgt; do

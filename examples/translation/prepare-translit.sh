@@ -56,11 +56,7 @@ for ((i=0;i<${#URLS[@]};++i)); do
             echo "$url not successfully downloaded."
             exit -1
         fi
-        if [ ${file: -4} == ".tgz" ]; then
-            tar zxvf $file
-        elif [ ${file: -4} == ".tar" ]; then
-            tar xvf $file
-        fi
+        tar zxvf $file
     fi
 done
 cd ..

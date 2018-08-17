@@ -1,5 +1,4 @@
-#!/usr/bin/env bash
-#
+#!/bin/bash
 # Adapted from https://github.com/facebookresearch/MIXER/blob/master/prepareData.sh
 
 echo 'Cloning Moses github repository (for tokenization scripts)...'
@@ -10,97 +9,91 @@ git clone https://github.com/rsennrich/subword-nmt.git
 
 SCRIPTS=mosesdecoder/scripts
 TOKENIZER=$SCRIPTS/tokenizer/tokenizer.perl
-LC=$SCRIPTS/tokenizer/lowercase.perl
 CLEAN=$SCRIPTS/training/clean-corpus-n.perl
+NORM_PUNC=$SCRIPTS/tokenizer/normalize-punctuation.perl
+REM_NON_PRINT_CHAR=$SCRIPTS/tokenizer/remove-non-printing-char.perl
 BPEROOT=subword-nmt
-BPE_TOKENS=10000
+BPE_TOKENS=40000
 
-URL="https://deeplanguageclass.github.io/fairseq-transliteration-data/latn-armn.tar.gz"
-GZ=latn-armn.tar.gz
+URLS=(
+    "https://deeplanguageclass.github.io/fairseq-transliteration-data/la-hy.train.tar.gz",
+    "https://deeplanguageclass.github.io/fairseq-transliteration-data/la-hy.test.tar.gz"
+)
+FILES=(
+    "la-hy.train.tar.gz",
+    "la-hy.test.tar.gz"
+)
+CORPORA=(
+    "translit.la-hy"
+)
 
 if [ ! -d "$SCRIPTS" ]; then
     echo "Please set SCRIPTS variable correctly to point to Moses scripts."
     exit
 fi
 
-src=latn
-tgt=armn
-lang=latn-armn
-prep=translit.tokenized.latn-armn
+src=la
+tgt=hy
+lang=la-hy
+prep=translit_la_hy
 tmp=$prep/tmp
 orig=orig
 
 mkdir -p $orig $tmp $prep
 
-echo "Downloading data from ${URL}..."
 cd $orig
-wget "$URL"
 
-if [ -f $GZ ]; then
-    echo "Data successfully downloaded."
-else
-    echo "Data not successfully downloaded."
-    exit
-fi
-
-tar zxvf $GZ
+for ((i=0;i<${#URLS[@]};++i)); do
+    file=${FILES[i]}
+    if [ -f $file ]; then
+        echo "$file already exists, skipping download"
+    else
+        url=${URLS[i]}
+        wget "$url"
+        if [ -f $file ]; then
+            echo "$url successfully downloaded."
+        else
+            echo "$url not successfully downloaded."
+            exit -1
+        fi
+        if [ ${file: -4} == ".tgz" ]; then
+            tar zxvf $file
+        elif [ ${file: -4} == ".tar" ]; then
+            tar xvf $file
+        fi
+    fi
+done
 cd ..
 
 echo "pre-processing train data..."
 for l in $src $tgt; do
-    f=train.tags.$lang.$l
-    tok=train.tags.$lang.tok.$l
-
-    cat $orig/$lang/$f | \
-    grep -v '<url>' | \
-    grep -v '<talkid>' | \
-    grep -v '<keywords>' | \
-    sed -e 's/<title>//g' | \
-    sed -e 's/<\/title>//g' | \
-    sed -e 's/<description>//g' | \
-    sed -e 's/<\/description>//g' | \
-    perl $TOKENIZER -threads 8 -l $l > $tmp/$tok
-    echo ""
-done
-perl $CLEAN -ratio 1.5 $tmp/train.tags.$lang.tok $src $tgt $tmp/train.tags.$lang.clean 1 175
-for l in $src $tgt; do
-    perl $LC < $tmp/train.tags.$lang.clean.$l > $tmp/train.tags.$lang.$l
-done
-
-echo "pre-processing valid/test data..."
-for l in $src $tgt; do
-    for o in `ls $orig/$lang/IWSLT14.TED*.$l.xml`; do
-    fname=${o##*/}
-    f=$tmp/${fname%.*}
-    echo $o $f
-    grep '<seg id' $o | \
-        sed -e 's/<seg id="[0-9]*">\s*//g' | \
-        sed -e 's/\s*<\/seg>\s*//g' | \
-        sed -e "s/\’/\'/g" | \
-    perl $TOKENIZER -threads 8 -l $l | \
-    perl $LC > $f
-    echo ""
+    rm $tmp/train.tags.$lang.tok.$l
+    for f in "${CORPORA[@]}"; do
+        cat $orig/$f.$l | \
+            perl $NORM_PUNC $l | \
+            perl $REM_NON_PRINT_CHAR | \
+            perl $TOKENIZER -threads 8 -a -l $l >> $tmp/train.tags.$lang.tok.$l
     done
 done
 
-
-echo "creating train, valid, test..."
+echo "pre-processing test data..."
 for l in $src $tgt; do
-    awk '{if (NR%23 == 0)  print $0; }' $tmp/train.tags.latn-armn.$l > $tmp/valid.$l
-    awk '{if (NR%23 != 0)  print $0; }' $tmp/train.tags.latn-armn.$l > $tmp/train.$l
-
-    cat $tmp/IWSLT14.TED.
-    
-    
-    v2010.latn-armn.$l \
-        $tmp/IWSLT14.TEDX.dev2012.latn-armn.$l \
-        $tmp/IWSLT14.TED.tst2010.latn-armn.$l \
-        $tmp/IWSLT14.TED.tst2011.latn-armn.$l \
-        $tmp/IWSLT14.TED.tst2012.latn-armn.$l \
-        > $tmp/test.$l
+    if [ "$l" == "$src" ]; then
+        t="src"
+    else
+        t="ref"
+    fi
+    perl $TOKENIZER -threads 8 -a -l $l > $tmp/test.$l
+    echo ""
 done
 
-TRAIN=$tmp/train.armn-latn
+echo "splitting train and valid..."
+for l in $src $tgt; do
+    awk '{if (NR%100 == 0)  print $0; }' $tmp/train.tags.$lang.tok.$l > $tmp/valid.$l
+    awk '{if (NR%100 != 0)  print $0; }' $tmp/train.tags.$lang.tok.$l > $tmp/train.$l
+done
+
+TRAIN=$tmp/train.hy-la
 BPE_CODE=$prep/code
 rm -f $TRAIN
 for l in $src $tgt; do
@@ -113,6 +106,13 @@ python $BPEROOT/learn_bpe.py -s $BPE_TOKENS < $TRAIN > $BPE_CODE
 for L in $src $tgt; do
     for f in train.$L valid.$L test.$L; do
         echo "apply_bpe.py to ${f}..."
-        python $BPEROOT/apply_bpe.py -c $BPE_CODE < $tmp/$f > $prep/$f
+        python $BPEROOT/apply_bpe.py -c $BPE_CODE < $tmp/$f > $tmp/bpe.$f
     done
+done
+
+perl $CLEAN -ratio 1.5 $tmp/bpe.train $src $tgt $prep/train 1 250
+perl $CLEAN -ratio 1.5 $tmp/bpe.valid $src $tgt $prep/valid 1 250
+
+for L in $src $tgt; do
+    cp $tmp/bpe.test.$L $prep/test.$L
 done

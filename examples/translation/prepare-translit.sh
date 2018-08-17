@@ -24,8 +24,10 @@ FILES=(
     "la-hy.test.tar.gz"
 )
 CORPORA=(
-    "translit.la-hy"
+    "train/translit.la-hy"
 )
+
+TEST=("test/translit.la-hy")
 
 if [ ! -d "$SCRIPTS" ]; then
     echo "Please set SCRIPTS variable correctly to point to Moses scripts."
@@ -74,7 +76,13 @@ done
 
 echo "pre-processing test data..."
 for l in $src $tgt; do
-    perl $TOKENIZER -threads 8 -a -l $l > $tmp/test.$l
+  rm $tmp/test.$l
+    for f in "${TEST[@]}"; do
+        cat $orig/$f.$l | \
+        perl $TOKENIZER -threads 8 -a -l $l > $tmp/test.$l
+
+    done
+
     echo ""
 done
 

@@ -16,11 +16,11 @@ BPEROOT=subword-nmt
 BPE_TOKENS=40000
 
 URLS=(
-    "https://deeplanguageclass.github.io/fairseq-transliteration-data/la-hy.train.tar.gz",
+    "https://deeplanguageclass.github.io/fairseq-transliteration-data/la-hy.train.tar.gz"
     "https://deeplanguageclass.github.io/fairseq-transliteration-data/la-hy.test.tar.gz"
 )
 FILES=(
-    "la-hy.train.tar.gz",
+    "la-hy.train.tar.gz"
     "la-hy.test.tar.gz"
 )
 CORPORA=(

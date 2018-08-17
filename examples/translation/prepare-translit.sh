@@ -78,11 +78,6 @@ done
 
 echo "pre-processing test data..."
 for l in $src $tgt; do
-    if [ "$l" == "$src" ]; then
-        t="src"
-    else
-        t="ref"
-    fi
     perl $TOKENIZER -threads 8 -a -l $l > $tmp/test.$l
     echo ""
 done

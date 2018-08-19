@@ -1,0 +1,36 @@
+{% extends "layout.html" %}
+
+{% block content %}
+  <h2>Translit Here</h2>
+
+    {% for message in form.translit.errors %}
+      <div class="flash">{{ message }}</div>
+    {% endfor %}
+
+    <form action="{{ url_for('upload') }}" method=post enctype="multipart/form-data">
+      {{ form.hidden_tag() }}
+
+      {{ form.translit.label }}
+      {{ form.translit }}
+
+      {{ form.translit_arm.label }}
+      {{ form.translit_arm }}
+
+
+      {{ form.message.label }}
+      {{ form.message }}
+
+      {{ form.upload }}
+
+      {{ form.save }}
+
+    </form>
+
+  <!-- <div class="progress">
+    <div id="progressBar" class="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100" style="width: 0%;">
+      0%
+    </div>
+  </div> -->
+
+
+{% endblock %}

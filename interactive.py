@@ -9,7 +9,7 @@
 from collections import namedtuple
 import numpy as np
 import sys
-
+import traceback
 import torch
 
 from fairseq import data, options, tasks, tokenizer, utils
@@ -20,9 +20,15 @@ Batch = namedtuple('Batch', 'srcs tokens lengths')
 Translation = namedtuple('Translation', 'src_str hypos pos_scores alignments')
 
 
-def buffered_read(buffer_size):
+def buffered_read(buffer_size, raw_string = None):
     buffer = []
-    for src_str in sys.stdin:
+
+    if not raw_string:
+        input_sequence = sys.stdin
+    else:
+        input_sequence = raw_string
+
+    for src_str in input_sequence:
         buffer.append(src_str.strip())
         if len(buffer) >= buffer_size:
             yield buffer
@@ -30,7 +36,6 @@ def buffered_read(buffer_size):
 
     if len(buffer) > 0:
         yield buffer
-
 
 def make_batches(lines, args, src_dict, max_positions):
     tokens = [
@@ -50,6 +55,142 @@ def make_batches(lines, args, src_dict, max_positions):
             tokens=batch['net_input']['src_tokens'],
             lengths=batch['net_input']['src_lengths'],
         ), batch['id']
+
+
+
+models = None
+args = None
+def get_translation_from_string(base_args, raw_string):
+    try:            
+            global args
+            args = base_args
+
+            if args.buffer_size < 1:
+                args.buffer_size = 1
+            if args.max_tokens is None and args.max_sentences is None:
+                args.max_sentences = 1
+
+            assert not args.sampling or args.nbest == args.beam, \
+                '--sampling requires --nbest to be equal to --beam'
+            assert not args.max_sentences or args.max_sentences <= args.buffer_size, \
+                '--max-sentences/--batch-size cannot be larger than --buffer-size'
+
+            use_cuda = torch.cuda.is_available() and not args.cpu
+
+            # Setup task, e.g., translation
+            task = tasks.setup_task(args)
+
+            # Load ensemble
+
+            global models
+            model_paths = args.path.split(':')
+            if not models:
+                print('| loading model(s) from {}'.format(args.path))
+                models, model_args = utils.load_ensemble_for_inference(model_paths, task, model_arg_overrides=eval(args.model_overrides))
+
+            # Set dictionaries
+            src_dict = task.source_dictionary
+            tgt_dict = task.target_dictionary
+
+            # Optimize ensemble for generation
+            for model in models:
+                model.make_generation_fast_(
+                    beamable_mm_beam_size=None if args.no_beamable_mm else args.beam,
+                    need_attn=args.print_alignment,
+                )
+                if args.fp16:
+                    model.half()
+
+            # Initialize generator
+            translator = SequenceGenerator(
+                models, tgt_dict, beam_size=args.beam, stop_early=(not args.no_early_stop),
+                normalize_scores=(not args.unnormalized), len_penalty=args.lenpen,
+                unk_penalty=args.unkpen, sampling=args.sampling, sampling_topk=args.sampling_topk,
+                minlen=args.min_len, sampling_temperature=args.sampling_temperature
+            )
+
+            if use_cuda:
+                translator.cuda()
+
+            # Load alignment dictionary for unknown word replacement
+            # (None if no unknown word replacement, empty if no path to align dictionary)
+            align_dict = utils.load_align_dict(args.replace_unk)
+
+            if args.buffer_size > 1:
+                print('| Sentence buffer size:', args.buffer_size)
+            print('| Type the input sentence and press return:')
+
+            final_sequence = ""
+
+            for inputs in buffered_read(args.buffer_size, raw_string):
+                indices = []
+                results = []
+                for batch, batch_indices in make_batches(inputs, args, src_dict, models[0].max_positions()):
+                    indices.extend(batch_indices)
+                    results += process_batch(batch, use_cuda, translator, align_dict, tgt_dict)
+
+
+                for i in np.argsort(indices):
+                    result = results[i]
+                    for hypo, pos_scores, align in zip(result.hypos, result.pos_scores, result.alignments):
+                        final_sequence += str(hypo.split('\t')[-1])
+                        if align is not None:
+                            print(align)
+
+            final_sequence = (" ".join(final_sequence.split(";"))).strip()
+
+    except Exception as e:
+        print(traceback.format_exc())
+
+    return final_sequence
+
+
+def make_result(src_str, hypos, align_dict, tgt_dict):
+    result = Translation(
+        src_str='O\t{}'.format(src_str),
+        hypos=[],
+        pos_scores=[],
+        alignments=[],
+    )
+
+    # Process top predictions
+    for hypo in hypos[:min(len(hypos), args.nbest)]:
+        hypo_tokens, hypo_str, alignment = utils.post_process_prediction(
+            hypo_tokens=hypo['tokens'].int().cpu(),
+            src_str=src_str,
+            alignment=hypo['alignment'].int().cpu() if hypo['alignment'] is not None else None,
+            align_dict=align_dict,
+            tgt_dict=tgt_dict,
+            remove_bpe=args.remove_bpe,
+        )
+        result.hypos.append('H\t{}\t{}'.format(hypo['score'], hypo_str))
+        result.pos_scores.append('P\t{}'.format(
+            ' '.join(map(
+                lambda x: '{:.4f}'.format(x),
+                hypo['positional_scores'].tolist(),
+            ))
+        ))
+        result.alignments.append(
+            'A\t{}'.format(' '.join(map(lambda x: str(utils.item(x)), alignment)))
+            if args.print_alignment else None
+        )
+    return result
+
+def process_batch(batch, use_cuda, translator,align_dict, tgt_dict):
+    tokens = batch.tokens
+    lengths = batch.lengths
+
+    if use_cuda:
+        tokens = tokens.cuda()
+        lengths = lengths.cuda()
+
+    translations = translator.generate(
+        tokens,
+        lengths,
+        maxlen=int(args.max_len_a * tokens.size(1) + args.max_len_b),
+    )
+
+    return [make_result(batch.srcs[i], t,align_dict, tgt_dict) for i, t in enumerate(translations)]
 
 
 def main(args):
@@ -103,62 +244,19 @@ def main(args):
     # (None if no unknown word replacement, empty if no path to align dictionary)
     align_dict = utils.load_align_dict(args.replace_unk)
 
-    def make_result(src_str, hypos):
-        result = Translation(
-            src_str='O\t{}'.format(src_str),
-            hypos=[],
-            pos_scores=[],
-            alignments=[],
-        )
-
-        # Process top predictions
-        for hypo in hypos[:min(len(hypos), args.nbest)]:
-            hypo_tokens, hypo_str, alignment = utils.post_process_prediction(
-                hypo_tokens=hypo['tokens'].int().cpu(),
-                src_str=src_str,
-                alignment=hypo['alignment'].int().cpu() if hypo['alignment'] is not None else None,
-                align_dict=align_dict,
-                tgt_dict=tgt_dict,
-                remove_bpe=args.remove_bpe,
-            )
-            result.hypos.append('H\t{}\t{}'.format(hypo['score'], hypo_str))
-            result.pos_scores.append('P\t{}'.format(
-                ' '.join(map(
-                    lambda x: '{:.4f}'.format(x),
-                    hypo['positional_scores'].tolist(),
-                ))
-            ))
-            result.alignments.append(
-                'A\t{}'.format(' '.join(map(lambda x: str(utils.item(x)), alignment)))
-                if args.print_alignment else None
-            )
-        return result
-
-    def process_batch(batch):
-        tokens = batch.tokens
-        lengths = batch.lengths
-
-        if use_cuda:
-            tokens = tokens.cuda()
-            lengths = lengths.cuda()
-
-        translations = translator.generate(
-            tokens,
-            lengths,
-            maxlen=int(args.max_len_a * tokens.size(1) + args.max_len_b),
-        )
-
-        return [make_result(batch.srcs[i], t) for i, t in enumerate(translations)]
-
     if args.buffer_size > 1:
         print('| Sentence buffer size:', args.buffer_size)
     print('| Type the input sentence and press return:')
+
+
     for inputs in buffered_read(args.buffer_size):
+        print(inputs)
         indices = []
         results = []
         for batch, batch_indices in make_batches(inputs, args, src_dict, models[0].max_positions()):
             indices.extend(batch_indices)
-            results += process_batch(batch)
+            results += process_batch(batch, use_cuda, translator, align_dict, tgt_dict)
+
 
         for i in np.argsort(indices):
             result = results[i]
@@ -170,7 +268,10 @@ def main(args):
                     print(align)
 
 
+
 if __name__ == '__main__':
     parser = options.get_generation_parser(interactive=True)
     args = options.parse_args_and_arch(parser)
-    main(args)
+    #main(args)
+    print(get_translation_from_string(args, "Test em anum 1"))
+    print(get_translation_from_string(args, "Test em anum 2"))

@@ -40,6 +40,8 @@ patch_request_class(app)  # set maximum file size, default is 16MB
 
 mail.init_app(app)
 
+base_args = config.base_args
+
 
 @app.route('/')
 def home():
@@ -103,9 +105,10 @@ def get_translit(query_string):
 
     return translit
 
+
+
 if __name__ == '__main__':
 
-    global base_args
     parser = options.get_generation_parser(interactive=True)
     args = options.parse_args_and_arch(parser)
     base_args = args

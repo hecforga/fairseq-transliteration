@@ -61,7 +61,7 @@ def make_batches(lines, args, src_dict, max_positions):
 models = None
 args = None
 def get_translation_from_string(base_args, raw_string):
-    try:            
+    try:
             global args
             args = base_args
 

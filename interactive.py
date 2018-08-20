@@ -137,7 +137,8 @@ def get_translation_from_string(base_args, raw_string):
                         if align is not None:
                             print(align)
 
-            final_sequence = (" ".join(final_sequence.split(";"))).strip()
+
+            final_sequence = (" ".join([i.replace(" ","") for i in final_sequence.split("   ")])).strip()
 
     except Exception as e:
         print(traceback.format_exc())
@@ -273,5 +274,5 @@ if __name__ == '__main__':
     parser = options.get_generation_parser(interactive=True)
     args = options.parse_args_and_arch(parser)
     #main(args)
-    print(get_translation_from_string(args, "Test em anum 1"))
-    print(get_translation_from_string(args, "Test em anum 2"))
+    print(get_translation_from_string(args, ["Test em  anum 1"]))
+    print(get_translation_from_string(args, ["Test em anum 2"]))

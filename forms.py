@@ -10,4 +10,4 @@ class TranslitForm(FlaskForm):
     message = TextAreaField("Comments", render_kw={"placeholder": "Please Write your comment here in the following format. \n Incorrect Translit \n Proceed with a detailed message"})
 
     upload = SubmitField("Translit")
-    save = SubmitField("Send Message")
+    save = SubmitField("Give Feedback")

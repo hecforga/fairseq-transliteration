@@ -94,7 +94,7 @@ def get_translit(query_string):
     translit = ""
     try:
 
-        translit = get_translation_from_string(base_args, query_string)
+        translit = get_translation_from_string(base_args, [query_string])
 
         if not translit:
             raise Exception('Translit Model Unavailable')

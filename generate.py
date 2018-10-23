@@ -5,6 +5,9 @@
 # This source code is licensed under the license found in the LICENSE file in
 # the root directory of this source tree. An additional grant of patent rights
 # can be found in the PATENTS file in the same directory.
+"""
+Translate pre-processed data with a trained model.
+"""
 
 import torch
 
@@ -54,11 +57,14 @@ def main(args):
     align_dict = utils.load_align_dict(args.replace_unk)
 
     # Load dataset (possibly sharded)
-    itr = data.EpochBatchIterator(
+    itr = task.get_batch_iterator(
         dataset=task.dataset(args.gen_subset),
         max_tokens=args.max_tokens,
         max_sentences=args.max_sentences,
-        max_positions=models[0].max_positions(),
+        max_positions=utils.resolve_max_positions(
+            task.max_positions(),
+            *[model.max_positions() for model in models]
+        ),
         ignore_invalid_inputs=args.skip_invalid_size_inputs_valid_test,
         required_batch_size_multiple=8,
         num_shards=args.num_shards,
@@ -71,10 +77,11 @@ def main(args):
         translator = SequenceScorer(models, task.target_dictionary)
     else:
         translator = SequenceGenerator(
-            models, task.target_dictionary, beam_size=args.beam,
+            models, task.target_dictionary, beam_size=args.beam, minlen=args.min_len,
             stop_early=(not args.no_early_stop), normalize_scores=(not args.unnormalized),
             len_penalty=args.lenpen, unk_penalty=args.unkpen,
-            sampling=args.sampling, sampling_topk=args.sampling_topk, minlen=args.min_len,
+            sampling=args.sampling, sampling_topk=args.sampling_topk, sampling_temperature=args.sampling_temperature,
+            diverse_beam_groups=args.diverse_beam_groups, diverse_beam_strength=args.diverse_beam_strength,
         )
 
     if use_cuda:

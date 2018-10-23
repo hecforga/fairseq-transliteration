@@ -24,6 +24,23 @@ from . import (
 
 @register_model('fconv')
 class FConvModel(FairseqModel):
+    """
+    A fully convolutional model, i.e. a convolutional encoder and a
+    convolutional decoder, as described in `"Convolutional Sequence to Sequence
+    Learning" (Gehring et al., 2017) <https://arxiv.org/abs/1705.03122>`_.
+
+    Args:
+        encoder (FConvEncoder): the encoder
+        decoder (FConvDecoder): the decoder
+
+    The Convolutional model provides the following named architectures and
+    command-line arguments:
+
+    .. argparse::
+        :ref: fairseq.models.fconv_parser
+        :prog:
+    """
+
     def __init__(self, encoder, decoder):
         super().__init__(encoder, decoder)
         self.encoder.num_attention_layers = sum(layer is not None for layer in decoder.attention)
@@ -49,8 +66,6 @@ class FConvModel(FairseqModel):
                             help='decoder output embedding dimension')
         parser.add_argument('--decoder-attention', type=str, metavar='EXPR',
                             help='decoder attention [True, ...]')
-        parser.add_argument('--normalization-constant', type=float, metavar='D',
-                            help='multiplies the result of the residual block by sqrt(value)')
         parser.add_argument('--share-input-output-embed', action='store_true',
                             help='share input and output embeddings (requires'
                                  ' --decoder-out-embed-dim and --decoder-embed-dim'
@@ -79,7 +94,6 @@ class FConvModel(FairseqModel):
             convolutions=eval(args.encoder_layers),
             dropout=args.dropout,
             max_positions=args.max_source_positions,
-            normalization_constant=args.normalization_constant,
         )
         decoder = FConvDecoder(
             dictionary=task.target_dictionary,
@@ -91,7 +105,6 @@ class FConvModel(FairseqModel):
             dropout=args.dropout,
             max_positions=args.max_target_positions,
             share_embed=args.share_input_output_embed,
-            normalization_constant=args.normalization_constant,
         )
         return FConvModel(encoder, decoder)
 
@@ -115,10 +128,10 @@ class FConvLanguageModel(FairseqLanguageModel):
         parser.add_argument('--adaptive-softmax-cutoff', metavar='EXPR',
                             help='comma separated list of adaptive softmax cutoff points. '
                                  'Must be used with adaptive_loss criterion')
+        parser.add_argument('--adaptive-softmax-dropout', type=float, metavar='D',
+                            help='sets adaptive softmax dropout for the tail projections')
         parser.add_argument('--decoder-attention', type=str, metavar='EXPR',
                             help='decoder attention [True, ...]')
-        parser.add_argument('--normalization-constant', type=float, metavar='D',
-                            help='multiplies the result of the residual block by sqrt(value)')
 
     @classmethod
     def build_model(cls, args, task):
@@ -143,22 +156,39 @@ class FConvLanguageModel(FairseqLanguageModel):
                 options.eval_str_list(args.adaptive_softmax_cutoff, type=int)
                 if args.criterion == 'adaptive_loss' else None
             ),
-            normalization_constant=args.normalization_constant,
+            adaptive_softmax_dropout=args.adaptive_softmax_dropout,
         )
         return FConvLanguageModel(decoder)
 
 
 class FConvEncoder(FairseqEncoder):
-    """Convolutional encoder"""
+    """
+    Convolutional encoder consisting of `len(convolutions)` layers.
+
+    Args:
+        dictionary (~fairseq.data.Dictionary): encoding dictionary
+        embed_dim (int, optional): embedding dimension
+        embed_dict (str, optional): filename from which to load pre-trained
+            embeddings
+        max_positions (int, optional): maximum supported input sequence length
+        convolutions (list, optional): the convolutional layer structure. Each
+            list item `i` corresponds to convolutional layer `i`. Layers are
+            given as ``(out_channels, kernel_width, [residual])``. Residual
+            connections are added between layers when ``residual=1`` (which is
+            the default behavior).
+        dropout (float, optional): dropout to be applied before each conv layer
+        normalization_constant (float, optional): multiplies the result of the
+            residual block by sqrt(value)
+        left_pad (bool, optional): whether the input is left-padded. Default:
+            ``True``
+    """
 
     def __init__(
-        self, dictionary, embed_dim=512, embed_dict=None, max_positions=1024,
-        convolutions=((512, 3),) * 20, dropout=0.1, normalization_constant=0.5,
-        left_pad=True,
+            self, dictionary, embed_dim=512, embed_dict=None, max_positions=1024,
+            convolutions=((512, 3),) * 20, dropout=0.1, left_pad=True,
     ):
         super().__init__(dictionary)
         self.dropout = dropout
-        self.normalization_constant = normalization_constant
         self.left_pad = left_pad
         self.num_attention_layers = None
 
@@ -204,6 +234,23 @@ class FConvEncoder(FairseqEncoder):
         self.fc2 = Linear(in_channels, embed_dim)
 
     def forward(self, src_tokens, src_lengths):
+        """
+        Args:
+            src_tokens (LongTensor): tokens in the source language of shape
+                `(batch, src_len)`
+            src_lengths (LongTensor): lengths of each source sentence of shape
+                `(batch)`
+
+        Returns:
+            dict:
+                - **encoder_out** (tuple): a tuple with two elements, where the
+                  first element is the last encoder layer's output and the
+                  second element is the same quantity summed with the input
+                  embedding (used for attention). The shape of both tensors is
+                  `(batch, src_len, embed_dim)`.
+                - **encoder_padding_mask** (ByteTensor): the positions of
+                  padding elements of shape `(batch, src_len)`
+        """
         # embed tokens and positions
         x = self.embed_tokens(src_tokens) + self.embed_positions(src_tokens)
         x = F.dropout(x, p=self.dropout, training=self.training)
@@ -244,7 +291,7 @@ class FConvEncoder(FairseqEncoder):
             x = F.glu(x, dim=2)
 
             if residual is not None:
-                x = (x + residual) * math.sqrt(self.normalization_constant)
+                x = (x + residual) * math.sqrt(0.5)
             residuals.append(x)
 
         # T x B x C -> B x T x C
@@ -261,7 +308,7 @@ class FConvEncoder(FairseqEncoder):
         x = GradMultiply.apply(x, 1.0 / (2.0 * self.num_attention_layers))
 
         # add output to input embedding for attention
-        y = (x + input_embedding) * math.sqrt(self.normalization_constant)
+        y = (x + input_embedding) * math.sqrt(0.5)
 
         return {
             'encoder_out': (x, y),
@@ -285,9 +332,8 @@ class FConvEncoder(FairseqEncoder):
 
 
 class AttentionLayer(nn.Module):
-    def __init__(self, conv_channels, embed_dim, normalization_constant=0.5, bmm=None):
+    def __init__(self, conv_channels, embed_dim, bmm=None):
         super().__init__()
-        self.normalization_constant = normalization_constant
         # projects from output of convolution to embedding dimension
         self.in_projection = Linear(conv_channels, embed_dim)
         # projects from embedding dimension to convolution size
@@ -299,7 +345,7 @@ class AttentionLayer(nn.Module):
         residual = x
 
         # attention
-        x = (self.in_projection(x) + target_embedding) * math.sqrt(self.normalization_constant)
+        x = (self.in_projection(x) + target_embedding) * math.sqrt(0.5)
         x = self.bmm(x, encoder_out[0])
 
         # don't attend over padding
@@ -327,7 +373,7 @@ class AttentionLayer(nn.Module):
             x = x * (s * s.rsqrt())
 
         # project back
-        x = (self.out_projection(x) + residual) * math.sqrt(self.normalization_constant)
+        x = (self.out_projection(x) + residual) * math.sqrt(0.5)
         return x, attn_scores
 
     def make_generation_fast_(self, beamable_mm_beam_size=None, **kwargs):
@@ -341,16 +387,15 @@ class FConvDecoder(FairseqIncrementalDecoder):
     """Convolutional decoder"""
 
     def __init__(
-        self, dictionary, embed_dim=512, embed_dict=None, out_embed_dim=256,
-        max_positions=1024, convolutions=((512, 3),) * 20, attention=True,
-        dropout=0.1, share_embed=False, positional_embeddings=True,
-        adaptive_softmax_cutoff=None, normalization_constant=0.5,
-        left_pad=False,
+            self, dictionary, embed_dim=512, embed_dict=None, out_embed_dim=256,
+            max_positions=1024, convolutions=((512, 3),) * 20, attention=True,
+            dropout=0.1, share_embed=False, positional_embeddings=True,
+            adaptive_softmax_cutoff=None, adaptive_softmax_dropout=0,
+            left_pad=False,
     ):
         super().__init__(dictionary)
         self.register_buffer('version', torch.Tensor([2]))
         self.dropout = dropout
-        self.normalization_constant = normalization_constant
         self.left_pad = left_pad
         self.need_attn = True
 
@@ -394,7 +439,7 @@ class FConvDecoder(FairseqIncrementalDecoder):
                 LinearizedConv1d(in_channels, out_channels * 2, kernel_size,
                                  padding=(kernel_size - 1), dropout=dropout)
             )
-            self.attention.append(AttentionLayer(out_channels, embed_dim, self.normalization_constant)
+            self.attention.append(AttentionLayer(out_channels, embed_dim)
                                   if attention[i] else None)
             self.residuals.append(residual)
             in_channels = out_channels
@@ -406,7 +451,7 @@ class FConvDecoder(FairseqIncrementalDecoder):
         if adaptive_softmax_cutoff is not None:
             assert not share_embed
             self.adaptive_softmax = AdaptiveSoftmax(num_embeddings, in_channels, adaptive_softmax_cutoff,
-                                                    dropout=dropout)
+                                                    dropout=adaptive_softmax_dropout)
         else:
             self.fc2 = Linear(in_channels, out_embed_dim)
             if share_embed:
@@ -479,7 +524,7 @@ class FConvDecoder(FairseqIncrementalDecoder):
 
             # residual
             if residual is not None:
-                x = (x + residual) * math.sqrt(self.normalization_constant)
+                x = (x + residual) * math.sqrt(0.5)
             residuals.append(x)
 
         # T x B x C -> B x T x C
@@ -505,7 +550,7 @@ class FConvDecoder(FairseqIncrementalDecoder):
         return self.embed_positions.max_positions() if self.embed_positions is not None else float('inf')
 
     def upgrade_state_dict(self, state_dict):
-        if state_dict.get('decoder.version', torch.Tensor([1]))[0] < 2:
+        if utils.item(state_dict.get('decoder.version', torch.Tensor([1]))[0]) < 2:
             # old models use incorrect weight norm dimension
             for i, conv in enumerate(self.convolutions):
                 # reconfigure weight norm
@@ -612,7 +657,7 @@ def base_lm_architecture(args):
     args.decoder_layers = getattr(args, 'decoder_layers', '[(1268, 4)] * 13')
     args.decoder_attention = getattr(args, 'decoder_attention', 'False')
     args.adaptive_softmax_cutoff = getattr(args, 'adaptive_softmax_cutoff', None)
-    args.normalization_constant = getattr(args, 'normalization_constant', 0.5)
+    args.adaptive_softmax_dropout = getattr(args, 'adaptive_softmax_dropout', 0)
 
 
 @register_model_architecture('fconv_lm', 'fconv_lm_dauphin_wikitext103')
@@ -657,7 +702,6 @@ def base_architecture(args):
     args.decoder_out_embed_dim = getattr(args, 'decoder_out_embed_dim', 256)
     args.decoder_attention = getattr(args, 'decoder_attention', 'True')
     args.share_input_output_embed = getattr(args, 'share_input_output_embed', False)
-    args.normalization_constant = getattr(args, 'normalization_constant', 0.5)
 
 
 @register_model_architecture('fconv', 'fconv_iwslt_de_en')

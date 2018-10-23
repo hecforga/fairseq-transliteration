@@ -10,7 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from fairseq import options, utils
-
+from fairseq.modules import AdaptiveSoftmax
 from . import (
     FairseqEncoder, FairseqIncrementalDecoder, FairseqModel, register_model,
     register_model_architecture,
@@ -49,6 +49,9 @@ class LSTMModel(FairseqModel):
                             help='decoder output embedding dimension')
         parser.add_argument('--decoder-attention', type=str, metavar='BOOL',
                             help='decoder attention')
+        parser.add_argument('--adaptive-softmax-cutoff', metavar='EXPR',
+                            help='comma separated list of adaptive softmax cutoff points. '
+                                 'Must be used with adaptive_loss criterion')
 
         # Granular dropout settings (if not specified these default to --dropout)
         parser.add_argument('--encoder-dropout-in', type=float, metavar='D',
@@ -92,14 +95,14 @@ class LSTMModel(FairseqModel):
         if args.share_all_embeddings:
             # double check all parameters combinations are valid
             if task.source_dictionary != task.target_dictionary:
-                raise RuntimeError('--share-all-embeddings requires a joint dictionary')
+                raise ValueError('--share-all-embeddings requires a joint dictionary')
             if args.decoder_embed_path and (
                     args.decoder_embed_path != args.encoder_embed_path):
-                raise RuntimeError(
+                raise ValueError(
                     '--share-all-embed not compatible with --decoder-embed-path'
                 )
             if args.encoder_embed_dim != args.decoder_embed_dim:
-                raise RuntimeError(
+                raise ValueError(
                     '--share-all-embeddings requires --encoder-embed-dim to '
                     'match --decoder-embed-dim'
                 )
@@ -117,7 +120,7 @@ class LSTMModel(FairseqModel):
         # one last double check of parameter combinations
         if args.share_decoder_input_output_embed and (
                 args.decoder_embed_dim != args.decoder_out_embed_dim):
-            raise RuntimeError(
+            raise ValueError(
                 '--share-decoder-input-output-embeddings requires '
                 '--decoder-embed-dim to match --decoder-out-embed-dim'
             )
@@ -145,6 +148,10 @@ class LSTMModel(FairseqModel):
             encoder_output_units=encoder.output_units,
             pretrained_embed=pretrained_decoder_embed,
             share_input_output_embed=args.share_decoder_input_output_embed,
+            adaptive_softmax_cutoff=(
+                options.eval_str_list(args.adaptive_softmax_cutoff, type=int)
+                if args.criterion == 'adaptive_loss' else None
+            ),
         )
         return cls(encoder, decoder)
 
@@ -184,6 +191,7 @@ class LSTMEncoder(FairseqEncoder):
         if bidirectional:
             self.output_units *= 2
 
+
     def forward(self, src_tokens, src_lengths):
         if self.left_pad:
             # convert left-padding to right-padding
@@ -222,10 +230,7 @@ class LSTMEncoder(FairseqEncoder):
         if self.bidirectional:
 
             def combine_bidir(outs):
-                return torch.cat([
-                    torch.cat([outs[2 * i], outs[2 * i + 1]], dim=0).view(1, bsz, self.output_units)
-                    for i in range(self.num_layers)
-                ], dim=0)
+                return outs.view(self.num_layers, 2, bsz, -1).transpose(1, 2).contiguous().view(self.num_layers, bsz, -1)
 
             final_hiddens = combine_bidir(final_hiddens)
             final_cells = combine_bidir(final_cells)
@@ -291,7 +296,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         self, dictionary, embed_dim=512, hidden_size=512, out_embed_dim=512,
         num_layers=1, dropout_in=0.1, dropout_out=0.1, attention=True,
         encoder_embed_dim=512, encoder_output_units=512, pretrained_embed=None,
-        share_input_output_embed=False,
+        share_input_output_embed=False, adaptive_softmax_cutoff=None,
     ):
         super().__init__(dictionary)
         self.dropout_in = dropout_in
@@ -300,6 +305,7 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         self.share_input_output_embed = share_input_output_embed
         self.need_attn = True
 
+        self.adaptive_softmax = None
         num_embeddings = len(dictionary)
         padding_idx = dictionary.pad()
         if pretrained_embed is None:
@@ -322,8 +328,13 @@ class LSTMDecoder(FairseqIncrementalDecoder):
         self.attention = AttentionLayer(encoder_output_units, hidden_size) if attention else None
         if hidden_size != out_embed_dim:
             self.additional_fc = Linear(hidden_size, out_embed_dim)
-        if not self.share_input_output_embed:
+        if adaptive_softmax_cutoff is not None:
+            # setting adaptive_softmax dropout to dropout_out for now but can be redefined
+            self.adaptive_softmax = AdaptiveSoftmax(num_embeddings, embed_dim, adaptive_softmax_cutoff,
+                                                    dropout=dropout_out)
+        elif not self.share_input_output_embed:
             self.fc_out = Linear(out_embed_dim, num_embeddings, dropout=dropout_out)
+
 
     def forward(self, prev_output_tokens, encoder_out_dict, incremental_state=None):
         encoder_out = encoder_out_dict['encoder_out']
@@ -402,14 +413,14 @@ class LSTMDecoder(FairseqIncrementalDecoder):
             attn_scores = None
 
         # project back to size of vocabulary
-        if hasattr(self, 'additional_fc'):
-            x = self.additional_fc(x)
-            x = F.dropout(x, p=self.dropout_out, training=self.training)
-        if self.share_input_output_embed:
-            x = F.linear(x, self.embed_tokens.weight)
-        else:
-            x = self.fc_out(x)
-
+        if self.adaptive_softmax is None:
+            if hasattr(self, 'additional_fc'):
+                x = self.additional_fc(x)
+                x = F.dropout(x, p=self.dropout_out, training=self.training)
+            if self.share_input_output_embed:
+                x = F.linear(x, self.embed_tokens.weight)
+            else:
+                x = self.fc_out(x)
         return x, attn_scores
 
     def reorder_incremental_state(self, incremental_state, new_order):
@@ -486,7 +497,7 @@ def base_architecture(args):
     args.decoder_dropout_out = getattr(args, 'decoder_dropout_out', args.dropout)
     args.share_decoder_input_output_embed = getattr(args, 'share_decoder_input_output_embed', False)
     args.share_all_embeddings = getattr(args, 'share_all_embeddings', False)
-
+    args.adaptive_softmax_cutoff = getattr(args, 'adaptive_softmax_cutoff', '10000,50000,200000')
 
 @register_model_architecture('lstm', 'lstm_wiseman_iwslt_de_en')
 def lstm_wiseman_iwslt_de_en(args):

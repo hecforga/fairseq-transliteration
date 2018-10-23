@@ -5,6 +5,9 @@
 # This source code is licensed under the license found in the LICENSE file in
 # the root directory of this source tree. An additional grant of patent rights
 # can be found in the PATENTS file in the same directory.
+"""
+Translate raw text with a trained model. Batches data on-the-fly.
+"""
 
 from collections import namedtuple
 import numpy as np
@@ -32,14 +35,14 @@ def buffered_read(buffer_size):
         yield buffer
 
 
-def make_batches(lines, args, src_dict, max_positions):
+def make_batches(lines, args, task, max_positions):
     tokens = [
-        tokenizer.Tokenizer.tokenize(src_str, src_dict, add_if_not_exist=False).long()
+        tokenizer.Tokenizer.tokenize(src_str, task.source_dictionary, add_if_not_exist=False).long()
         for src_str in lines
     ]
     lengths = np.array([t.numel() for t in tokens])
-    itr = data.EpochBatchIterator(
-        dataset=data.LanguagePairDataset(tokens, lengths, src_dict),
+    itr = task.get_batch_iterator(
+        dataset=data.LanguagePairDataset(tokens, lengths, task.source_dictionary),
         max_tokens=args.max_tokens,
         max_sentences=args.max_sentences,
         max_positions=max_positions,
@@ -76,7 +79,6 @@ def main(args):
     models, model_args = utils.load_ensemble_for_inference(model_paths, task, model_arg_overrides=eval(args.model_overrides))
 
     # Set dictionaries
-    src_dict = task.source_dictionary
     tgt_dict = task.target_dictionary
 
     # Optimize ensemble for generation
@@ -90,10 +92,11 @@ def main(args):
 
     # Initialize generator
     translator = SequenceGenerator(
-        models, tgt_dict, beam_size=args.beam, stop_early=(not args.no_early_stop),
-        normalize_scores=(not args.unnormalized), len_penalty=args.lenpen,
-        unk_penalty=args.unkpen, sampling=args.sampling, sampling_topk=args.sampling_topk,
-        minlen=args.min_len, sampling_temperature=args.sampling_temperature
+        models, tgt_dict, beam_size=args.beam, minlen=args.min_len,
+        stop_early=(not args.no_early_stop), normalize_scores=(not args.unnormalized),
+        len_penalty=args.lenpen, unk_penalty=args.unkpen,
+        sampling=args.sampling, sampling_topk=args.sampling_topk, sampling_temperature=args.sampling_temperature,
+        diverse_beam_groups=args.diverse_beam_groups, diverse_beam_strength=args.diverse_beam_strength,
     )
 
     if use_cuda:
@@ -142,13 +145,18 @@ def main(args):
             tokens = tokens.cuda()
             lengths = lengths.cuda()
 
+        encoder_input = {'src_tokens': tokens, 'src_lengths': lengths}
         translations = translator.generate(
-            tokens,
-            lengths,
+            encoder_input,
             maxlen=int(args.max_len_a * tokens.size(1) + args.max_len_b),
         )
 
         return [make_result(batch.srcs[i], t) for i, t in enumerate(translations)]
+
+    max_positions = utils.resolve_max_positions(
+        task.max_positions(),
+        *[model.max_positions() for model in models]
+    )
 
     if args.buffer_size > 1:
         print('| Sentence buffer size:', args.buffer_size)
@@ -156,7 +164,7 @@ def main(args):
     for inputs in buffered_read(args.buffer_size):
         indices = []
         results = []
-        for batch, batch_indices in make_batches(inputs, args, src_dict, models[0].max_positions()):
+        for batch, batch_indices in make_batches(inputs, args, task, max_positions):
             indices.extend(batch_indices)
             results += process_batch(batch)
 

@@ -16,28 +16,26 @@ BPEROOT=subword-nmt
 BPE_TOKENS=40000
 
 URLS=(
-    "https://deeplanguageclass.github.io/fairseq-transliteration-data/la-hy.train.tar.gz"
-    "https://deeplanguageclass.github.io/fairseq-transliteration-data/la-hy.test.tar.gz"
+    "http://www.prhlt.upv.es/~fcn/Students/ta/Corpus.tgz"
 )
 FILES=(
-    "la-hy.train.tar.gz"
-    "la-hy.test.tar.gz"
+    "Corpus.tgz"
 )
 CORPORA=(
-    "train/translit.la-hy"
+    "train/translit.es-en"
 )
 
-TEST=("test/translit.la-hy")
+TEST=("test/translit.es-en")
 
 if [ ! -d "$SCRIPTS" ]; then
     echo "Please set SCRIPTS variable correctly to point to Moses scripts."
     exit
 fi
 
-src=la
-tgt=hy
-lang=la-hy
-prep=translit_la_hy
+src=es
+tgt=en
+lang=es-en
+prep=translit_es_en
 tmp=$prep/tmp
 orig=orig
 
@@ -51,7 +49,7 @@ for ((i=0;i<${#URLS[@]};++i)); do
         echo "$file already exists, skipping download"
     else
         url=${URLS[i]}
-        wget "$url"
+        wget "$url" --no-check-certificate
         if [ -f $file ]; then
             echo "$url successfully downloaded."
         else
@@ -61,6 +59,15 @@ for ((i=0;i<${#URLS[@]};++i)); do
         tar zxvf $file
     fi
 done
+mkdir train
+mv Corpus/europarl-v7.es-en-train-red.es train/translit.es-en.es
+mv Corpus/europarl-v7.es-en-train-red.en train/translit.es-en.en
+mkdir test
+mv Corpus/europarl-v7.es-en-test.es test/translit.es-en.es
+mv Corpus/europarl-v7.es-en-test.en test/translit.es-en.en
+rm -rf Corpus
+sed -i '/^$/d' test/translit.es-en.es
+sed -i 's/trabajo; obviamente/trabajo.\nObviamente/g' test/translit.es-en.es
 cd ..
 
 echo "pre-processing train data..."
@@ -92,7 +99,7 @@ for l in $src $tgt; do
     awk '{if (NR%100 != 0)  print $0; }' $tmp/train.tags.$lang.tok.$l > $tmp/train.$l
 done
 
-TRAIN=$tmp/train.hy-la
+TRAIN=$tmp/train.es-en
 BPE_CODE=$prep/code
 rm -f $TRAIN
 for l in $src $tgt; do

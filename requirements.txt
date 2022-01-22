@@ -1,4 +1,4 @@
 cffi
 numpy
-torch==1.7.1
+torch
 tqdm

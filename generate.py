@@ -91,6 +91,7 @@ def main(args):
     scorer = bleu.Scorer(tgt_dict.pad(), tgt_dict.eos(), tgt_dict.unk())
     num_sentences = 0
     has_target = True
+    translations = None
     with progress_bar.build_progress_bar(args, itr) as t:
         if args.score_reference:
             translations = translator.score_batched_itr(t, cuda=use_cuda, timer=gen_timer)
@@ -101,7 +102,6 @@ def main(args):
             )
 
         wps_meter = TimeMeter()
-        print(translations)
         """ for sample_id, src_tokens, target_tokens, hypos in translations:
             # Process input and ground truth
             has_target = target_tokens is not None
@@ -160,6 +160,7 @@ def main(args):
             t.log({'wps': round(wps_meter.avg)})
             num_sentences += 1 """
 
+    print(translations)
     print('| Translated {} sentences ({} tokens) in {:.1f}s ({:.2f} sentences/s, {:.2f} tokens/s)'.format(
         num_sentences, gen_timer.n, gen_timer.sum, num_sentences / gen_timer.sum, 1. / gen_timer.avg))
     if has_target:

@@ -101,7 +101,11 @@ def main(args):
             )
 
         wps_meter = TimeMeter()
-        for sample_id, src_tokens, target_tokens, hypos in translations:
+        print(sample_id)
+        print(src_tokens)
+        print(target_tokens)
+        print(hypos)
+        """ for sample_id, src_tokens, target_tokens, hypos in translations:
             # Process input and ground truth
             has_target = target_tokens is not None
             target_tokens = target_tokens.int().cpu() if has_target else None
@@ -157,7 +161,7 @@ def main(args):
 
             wps_meter.update(src_tokens.size(0))
             t.log({'wps': round(wps_meter.avg)})
-            num_sentences += 1
+            num_sentences += 1 """
 
     print('| Translated {} sentences ({} tokens) in {:.1f}s ({:.2f} sentences/s, {:.2f} tokens/s)'.format(
         num_sentences, gen_timer.n, gen_timer.sum, num_sentences / gen_timer.sum, 1. / gen_timer.avg))

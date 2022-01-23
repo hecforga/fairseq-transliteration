@@ -101,10 +101,7 @@ def main(args):
             )
 
         wps_meter = TimeMeter()
-        print(sample_id)
-        print(src_tokens)
-        print(target_tokens)
-        print(hypos)
+        print(translations)
         """ for sample_id, src_tokens, target_tokens, hypos in translations:
             # Process input and ground truth
             has_target = target_tokens is not None
